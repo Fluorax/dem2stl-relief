@@ -1,0 +1,65 @@
+# relief-map — single source of truth. Every other value is derived from this file.
+
+paths:
+  tiles_dir: tiles          # Copernicus GLO-90 tiles (fetch_data.py)
+  fill_dir: fill_tiles      # SRTM 1" - used ONLY to patch flat country islands (DEM gaps like Donousa)
+  borders_dir: borders      # geoBoundaries ADM0 (fetch_data.py)
+  out_dir: out              # results go to out/full/ or out/<region>/
+
+# Greek Grid (EPSG:2100) projection parameters, but on the WGS84 datum so no datum shift is needed:
+# gdalwarp and geopandas then can't pick different transformations (DEM/borders stay aligned).
+crs: "+proj=tmerc +lat_0=0 +lon_0=24 +k=0.9996 +x_0=500000 +y_0=0 +ellps=WGS84 +units=m +no_defs"
+country: GRC                                     # printed in 3D
+neighbours: [TUR, ALB, MKD, BGR, MNE, XKX, SRB]       # flat plateau; add codes if the report flags unclassified land
+
+checks:
+  land_threshold_m: 5   # DEM above this counts as land (unclassified-land check, flat-island check, patch)
+
+layout:
+  grid: [4, 4]        # [cols, rows] of tiles. Print scale is DERIVED from this to fit the country.
+  tile_mm: 220        # tile edge length (fits 220x220 beds and larger)
+  margin_mm: 10       # minimum empty space between the country's bbox and the frame edge
+  px_mm: 0.2          # print-space pixel size (tile_mm / px_mm must be an integer)
+
+print:
+  layer_mm: 0.2
+  base_mm: 1.6              # sea thickness
+  plateau_layers: 1         # neighbours sit this many layers above the sea
+  land_offset_layers: 4     # Greek land starts this many layers above the plateau (lifts coastal plains off the sea)
+
+relief:
+  # Elevation (m) -> height above the Greek land base (print mm), smooth monotone curve
+  # through these points. Steeper segments = more exaggeration there. Convex shape keeps
+  # lowlands flat and makes high mountains pronounced. The report shows the exaggeration
+  # factor per segment. Last point should be >= h_max (Olympus ~2,850 m after resampling).
+  curve:
+    - [0, 0]
+    - [300, 0.6]
+    - [1000, 4]
+    - [1500, 10]
+    - [3000, 28]
+
+mesh:
+  max_error_mm: 0.05     # max vertical deviation of the simplified mesh (hmm); < half a layer
+  skip_sea_only: true    # don't mesh tiles that are pure sea
+
+colours:
+  # Elevations (m) where a new hypsometric colour starts on Greek land. Converted to
+  # PrusaSlicer layer heights through relief.curve in stl/manifest.json.
+  # Empty = only the fixed swaps (sea -> plateau -> country base colour). Palette undecided.
+  bands_m: []
+
+# Print only part of the map: python pipeline.py --region NAME (same for mesh.py).
+# A preset needs a bbox [lon_min, lat_min, lon_max, lat_max]; the frame is fitted to it
+# instead of to the whole country. Any other top-level key (layout, relief, print, ...)
+# can be overridden per region. Optional `focus`: a GeoJSON polygon - country land outside
+# it is printed flat like a neighbour (draw one at geojson.io). Bboxes below are approximate.
+regions:
+  peloponnese:
+    bbox: [21.05, 36.35, 23.50, 38.40]
+    layout:
+      grid: [1, 1]
+  attica:
+    bbox: [23.10, 37.60, 24.15, 38.35]
+    layout:
+      grid: [1, 1]

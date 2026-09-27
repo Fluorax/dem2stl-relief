@@ -1,0 +1,9 @@
+tiles/
+fill_tiles/
+borders/
+out/
+.git/
+__pycache__/
+*.tif
+*.hgt
+*.stl

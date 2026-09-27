@@ -1,0 +1,12 @@
+services:
+  relief:
+    build: .
+    image: relief-map:dev
+    pull_policy: never   # build explicitly with `docker compose build`
+    # Run as your host user so outputs in ./ aren't root-owned
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /work
+    environment:
+      HOME: /tmp   # awscli/pip caches need a writable home
+    volumes:
+      - ./:/work   # tiles/, borders/, config, script, out/ all live here

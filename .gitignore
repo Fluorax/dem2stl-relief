@@ -1,0 +1,8 @@
+# downloaded data (fetch_data.py recreates it)
+tiles/
+fill_tiles/
+borders/
+# generated
+out/
+__pycache__/
+*.pyc
