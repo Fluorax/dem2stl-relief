@@ -21,7 +21,7 @@ Repo: `dem2stl-relief` (GitHub). Turns a country's DEM into tiled, exaggerated-r
 | `mesh.py` | Stages 4–5: `z.tif` → `stl/tile_r<row>c<col>.stl` + `stl/manifest.json`. Imports `load_config` from `pipeline.py` |
 | `Dockerfile` | Stage 1 builds `hmm` from source; stage 2 is `ghcr.io/osgeo/gdal:ubuntu-small-3.13.3` (pinned; `latest` is a GDAL dev build) + venv |
 | `docker-compose.yml` | Service `relief`, runs as host UID/GID, mounts repo at `/work`, `pull_policy: never` |
-| `tiles/`, `fill_tiles/`, `borders/`, `out/` | Data and outputs. Git- and docker-ignored; never commit |
+| `tiles/`, `tiles30/`, `fill_tiles/`, `borders/`, `trails/`, `out/` | Data and outputs. Git- and docker-ignored; never commit |
 
 ## Commands
 
@@ -45,6 +45,9 @@ docker compose run --rm relief python mesh.py [--region NAME] [--only r0c0 r1c2]
 - **SRTM fill** is applied only to country islands whose Copernicus max ≤ threshold, and only if SRTM shows relief there (`patched`). Otherwise `confirmed_flat` / `unverified`. Never blend SRTM elsewhere.
 - **hmm units.** x/y in pixels; heightmap normalised 0..1; `z = value × zscale`. **`-e` and `-b` are fractions of zscale, not pixels.** hmm already puts image row 0 at +Y (north at the back). `mesh.py` auto-detects orientation and hard-fails if the mesh top ≠ the heightmap top. Keep that check.
 - **Layer grid.** Layer tops are `first_layer_mm + k × layer_mm` (currently 0.2 + k × 0.12; the printer is calibrated for a 0.2 mm first layer). `base_mm` must sit on that grid (the pipeline checks); plateau and land offsets are whole layers above it.
+- **Resampling:** `average` when the print pixel is ≥ the DEM pixel, `cubic` when finer (upsampling), to avoid blocky DEM pixels.
+- **DEM source** per region: `dem: glo90 | glo30` (`DEM_SOURCES` in `pipeline.py`; tile code `30` / `10`, buckets `copernicus-dem-90m` / `-30m`). `finer_than_dem` compares against the chosen source.
+- **Trails** (region `trails` block): OSM ways from Overpass → `trails/<region>.geojson` → buffered by `width_mm/2`, rasterized on country land only, bench-cut (`mode: cut`, floor = grey-erosion minimum over the width − `depth_layers`, never below `plateau_top + layer`) or embossed (`mode: emboss`, top = grey-dilation maximum + `depth_layers`) (the country colour starts there). Trails are ODbL, so credit OSM on shared prints.
 - **Colour swaps** are layer-top heights: plateau at `base + layer`, country at `plateau_top + layer`, plus `colours.bands_m` via the curve, snapped up to the grid.
 - Users must **not scale STLs in the slicer** (it breaks Z). Change `layout.tile_mm` and regenerate.
 
@@ -75,5 +78,5 @@ Last verified baseline (GDAL 3.13.3, 4×4 grid, 220 mm tiles, `land_offset_layer
 - Minimum island size rule (drop or enlarge sub-printable islands)
 - Colour palette → `colours.bands_m`
 - Tile joining (backing board, pins or dovetails)
-- GLO-30 option for small, large-scale regions (`finer_than_dem` flags when needed)
+- Hiking presets: `xerovouni` (run, good), `konitsa` (run, good; Aoos-gorge frame)
 - README: exact Copernicus attribution wording still needs to be taken from the official licence page

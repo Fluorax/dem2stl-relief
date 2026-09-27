@@ -1,5 +1,7 @@
 # downloaded data (fetch_data.py recreates it)
 tiles/
+tiles30/
+trails/
 fill_tiles/
 borders/
 # generated

@@ -223,3 +223,14 @@ Red (unclassified) areas were: Ohrid & Great Prespa lakes (polygon holes), borde
 - The sliced preview's contour rings are mostly the "Feature type" view drawing a perimeter at every step; the 3D view of `attica_hybrid` looked right
 - The printer is calibrated for a 0.2 mm first layer, so it has to stay; the rest go to 0.12 mm. Added `print.first_layer_mm`: layer tops at 0.2 + k × 0.12, `base_mm` validated against the grid, swaps and bands snapped to it, and the layer preview uses the same grid
 - To keep the physical heights close: `base_mm` 1.6 → 1.64, `plateau_layers` 1 → 2 (0.24 mm), `land_offset_layers` 4 → 7 (0.84 mm). Swaps: plateau 1.76 mm, country 2.00 mm. Not yet run; the whole-map baseline numbers above were at 0.2 mm layers
+
+## Hiking maps (2026-09-27)
+- Goal: single-mountain topo prints to study before a hike. First target Xerovouni, central Evia (Portaris 1,453 m, 2nd highest on Evia after Dirfys 1,743 m; a ~3 km SW–NE ridge, steep north face; trailheads Steni, Seta, Metochi)
+- Frame ~20 × 20 km including Dirfys and Steni: at ~1:100,000 a pixel is ~20 m, which fits GLO-30. At 12 km (Xerovouni only, ~1:60,000) GLO-30 would look soft
+- Added: `dem: glo30` per region (fetch only the region's tiles), OSM trails via Overpass as grooves (0.8 mm wide, 2 layers deep, country land only, floored at the country-colour layer), a linear curve preset (`[1800, 22]` ≈ 1.2×). Bbox is approximate. Not yet run
+- Next: Konitsa / Tymfi
+- First Xerovouni run: scale 1:100,264, 20.1 m/px (`finer_than_dem` true vs GLO-30's 30 m), max Z 23.8 mm (Dirfys 1,738 m), 223 trail ways / 104 km / 19,473 groove px. The relief looked much better than any GLO-90 region, but **the trails weren't visible** in the slice: a plain 0.24 mm groove disappears into the layer steps on slopes
+- Changed: trails are now bench-cut (floor = minimum surface over the trail width − depth), and upsampling uses `cubic` instead of `average`. Not yet run
+- Xerovouni rerun with the bench cut: trails better. The user suggested embossing as an alternative → added `trails.mode: cut | emboss`
+- Added `konitsa`: Konitsa (40.05 N, 20.75 E), Trapezitsa (2,024 m, north of the Aoos), the Aoos gorge, Tymfi (Gamila 2,497 m at 39.982 N, 20.815 E; ~20–25 km E–W × 15 km N–S). Bbox [20.66, 39.90, 20.96, 40.12] ≈ 25 km, ~1:125,000, linear ≈ 1.1×. Assumed "the gorge" = Aoos; Vikos (SW of Tymfi) needs the bbox extended south. The Albanian border is a few km west of Konitsa, so part of the frame is neighbour plateau. Not yet run
+- `konitsa` run (after fixing a config.yaml that had pipeline.py pasted into it): the user confirmed it looks great with the Aoos-gorge frame

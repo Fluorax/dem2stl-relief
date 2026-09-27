@@ -2,6 +2,8 @@
 
 paths:
   tiles_dir: tiles          # Copernicus GLO-90 tiles (fetch_data.py)
+  tiles30_dir: tiles30      # Copernicus GLO-30 tiles, only for regions with `dem: glo30` (fetch_data.py --region)
+  trails_dir: trails        # OSM trails per region (fetch_data.py --region)
   fill_dir: fill_tiles      # SRTM 1" - used ONLY to patch flat country islands (DEM gaps like Donousa)
   borders_dir: borders      # geoBoundaries ADM0 (fetch_data.py)
   out_dir: out              # results go to out/full/ or out/<region>/
@@ -9,6 +11,7 @@ paths:
 # Greek Grid (EPSG:2100) projection parameters, but on the WGS84 datum so no datum shift is needed:
 # gdalwarp and geopandas then can't pick different transformations (DEM/borders stay aligned).
 crs: "+proj=tmerc +lat_0=0 +lon_0=24 +k=0.9996 +x_0=500000 +y_0=0 +ellps=WGS84 +units=m +no_defs"
+dem: glo90                                      # glo90 | glo30 (regions can override)
 country: GRC                                    # printed in 3D
 neighbours: [TUR, ALB, MKD, BGR, MNE, XKX, SRB] # flat plateau; add codes if the preview shows missing land
 
@@ -24,9 +27,9 @@ layout:
 print:
   first_layer_mm: 0.2       # printer is calibrated for a 0.2 mm first layer
   layer_mm: 0.12            # all other layers. Slicer must use exactly these two values
-  base_mm: 1.04             # sea thickness; must sit on the layer grid (0.2 + k*0.12) - pipeline checks
-  plateau_layers: 1         # neighbours sit this many layers above the sea (0.24 mm)
-  land_offset_layers: 4     # country land starts this many layers above the plateau (0.84 mm)
+  base_mm: 1.64             # sea thickness; must sit on the layer grid (0.2 + k*0.12) - pipeline checks
+  plateau_layers: 2         # neighbours sit this many layers above the sea (0.24 mm)
+  land_offset_layers: 7     # country land starts this many layers above the plateau (0.84 mm)
 
 relief:
   # Elevation (m) -> height above the land base (print mm), smooth monotone curve through
@@ -146,3 +149,40 @@ regions:
         blur_km: 2
         exaggeration: 3.0   # = the curve's slope, so hills come out exactly as in attica_linear
         deadband_m: 25      # the only real change: undulation under +-25 m around the local mean is flattened
+
+  # --- Hiking maps ------------------------------------------------------------------
+  # `dem: glo30` for large scales; `trails` presses OSM hiking paths in as grooves.
+  xerovouni:                # Xerovouni (Portaris 1,453 m) + Dirfys (1,743 m) + Steni, central Evia. ~20 x 20 km, approximate bbox
+    bbox: [23.775, 38.51, 24.005, 38.69]
+    dem: glo30
+    layout:
+      grid: [1, 1]
+    relief:
+      curve:                # linear; ~1.2x at ~1:100,000 - check vertical_exaggeration_by_segment
+        - [0, 0]
+        - [1800, 22]
+    trails:
+      highway: [path, footway, bridleway]   # plus all member ways of route=hiking relations
+      hiking_routes: true
+      exclude_highway: [motorway, trunk, primary, secondary, tertiary]
+      mode: cut             # cut = bench-cut groove | emboss = raised rib
+      width_mm: 0.8         # 2 extrusion widths - narrower won't print as a groove
+      depth_layers: 2       # 0.24 mm at 0.12 mm layers
+
+  konitsa:                  # Konitsa + Trapezitsa (2,024 m) + Aoos gorge + Tymfi (Gamila 2,497 m). ~25 x 25 km, approximate
+    bbox: [20.66, 39.90, 20.96, 40.12]
+    # Vikos gorge instead of / as well as Aoos: extend south, e.g. [20.62, 39.86, 20.96, 40.12] (~29 km, ~1:150,000)
+    dem: glo30
+    layout:
+      grid: [1, 1]
+    relief:
+      curve:                # linear, ~1.1x at ~1:125,000 - check vertical_exaggeration_by_segment
+        - [0, 0]
+        - [2600, 23]
+    trails:
+      highway: [path, footway, bridleway]
+      hiking_routes: true
+      exclude_highway: [motorway, trunk, primary, secondary, tertiary]
+      mode: cut
+      width_mm: 0.8
+      depth_layers: 2

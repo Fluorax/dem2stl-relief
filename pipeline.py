@@ -19,6 +19,7 @@ Outputs in <out_dir>/<region or "full">/:
 Preview colours: blue = sea, dark blue = sea with no DEM (verify it's really sea),
 grey = neighbour plateau, green->brown->white = country by elevation,
 magenta = flat country island that the fill DEM can't verify (no fill coverage) -> investigate.
+dark red = trail grooves (regions with `trails`).
 Flat islands the fill DEM shows real relief on are patched from it; ones it confirms as flat
 (sand spits, lagoon islets) render normally. Every flat island is listed in report.json.
 White lines/labels = tile grid.
@@ -42,6 +43,12 @@ from scipy.interpolate import PchipInterpolator
 from pyproj import Transformer
 
 NODATA = -9999.0
+
+# Copernicus DEM products: tile-name resolution code, bucket, native pixel size, config dir key
+DEM_SOURCES = {
+    "glo90": {"code": "30", "bucket": "copernicus-dem-90m", "res_m": 90.0, "dir_key": "tiles_dir"},
+    "glo30": {"code": "10", "bucket": "copernicus-dem-30m", "res_m": 30.0, "dir_key": "tiles30_dir"},
+}
 
 
 def run(cmd):
@@ -129,14 +136,20 @@ def main():
     transform = from_origin(x0, y1, res, res)
 
     # --- stage 1: DEM onto the print grid ---------------------------------------
-    tiles = sorted(glob.glob(str(Path(P["tiles_dir"]) / "*" / "*.tif")))
+    dem_src = cfg.get("dem", "glo90")
+    if dem_src not in DEM_SOURCES:
+        sys.exit(f"dem must be one of {list(DEM_SOURCES)}")
+    tiles_dir = P[DEM_SOURCES[dem_src]["dir_key"]]
+    tiles = sorted(glob.glob(str(Path(tiles_dir) / "*" / "*.tif")))
     if not tiles:
-        sys.exit(f"no DEM tiles in {P['tiles_dir']} - run fetch_data.py")
+        sys.exit(f"no {dem_src} tiles in {tiles_dir} - run fetch_data.py" + (f" --region {args.region}" if args.region else ""))
     vrt, dem_path = out / "dem.vrt", out / "dem.tif"
     run(["gdalbuildvrt", "-q", "-overwrite", str(vrt), *tiles])
+    # downsampling -> average; upsampling (print finer than the DEM) -> cubic, avoids blocky DEM pixels
+    resample = "average" if res >= DEM_SOURCES[dem_src]["res_m"] else "cubic"
     run(["gdalwarp", "-q", "-overwrite", "-t_srs", crs,
          "-te", *map(str, (x0, y0, x1, y1)), "-ts", str(nx), str(ny),
-         "-r", "average", "-dstnodata", str(NODATA), "-co", "COMPRESS=DEFLATE",
+         "-r", resample, "-dstnodata", str(NODATA), "-co", "COMPRESS=DEFLATE",
          str(vrt), str(dem_path)])
     with rasterio.open(dem_path) as src:
         dem = src.read(1).astype(np.float32)
@@ -292,6 +305,37 @@ def main():
     z = np.full((ny, nx), base, np.float32)
     z[cls == 1] = base + plateau
     z[land] = base + plateau + offset + relief_mm
+    # --- trails: grooves pressed into country land ----------------------------------
+    trail_mask = np.zeros((ny, nx), bool)
+    trail_stats = None
+    T = region.get("trails") if region else None
+    if T:
+        tfile = Path(P["trails_dir"]) / f"{args.region}.geojson"
+        if not tfile.exists():
+            sys.exit(f"{tfile} missing - run fetch_data.py --region {args.region}")
+        lines = gpd.read_file(tfile).to_crs(crs)
+        if len(lines):
+            half_m = T["width_mm"] / 2 * m_per_mm
+            trail_mask = rasterize([(g.buffer(half_m), 1) for g in lines.geometry],
+                                   out_shape=(ny, nx), transform=transform, fill=0,
+                                   dtype="uint8").astype(bool) & land
+            floor = base + plateau + layer          # never cut into the plateau/country colour boundary
+            # bench cut: groove floor = lowest surface within the trail width, minus depth. On slopes a plain
+            # "z - depth" groove disappears into the layer steps; this cuts a visible ledge instead.
+            r = max(1, int(round(T["width_mm"] / 2 / px)))
+            yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+            disk = (xx ** 2 + yy ** 2) <= r * r
+            if T.get("mode", "cut") == "emboss":
+                # raised rib: top = highest surface within the trail width + depth (mirror of the bench cut)
+                high = ndimage.grey_dilation(z, footprint=disk)
+                z[trail_mask] = high[trail_mask] + T["depth_layers"] * layer
+            else:
+                low = ndimage.grey_erosion(z, footprint=disk)
+                z[trail_mask] = np.maximum(low[trail_mask] - T["depth_layers"] * layer, floor)
+        trail_stats = {"ways": int(len(lines)), "km": round(float(lines.length.sum()) / 1000, 1),
+                       "groove_px": int(trail_mask.sum()), "mode": T.get("mode", "cut"), "width_mm": T["width_mm"],
+                       "depth_mm": round(T["depth_layers"] * layer, 3)}
+
     write_tif(out / "z.tif", z, transform, crs)
 
     # exaggeration per curve segment: print mm / true-scale mm
@@ -324,6 +368,7 @@ def main():
         hs.unlink()
         rgb = colour * shade
         rgb[status == 3] = (220, 0, 220)
+        rgb[trail_mask] = (200, 30, 30)
         img = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8))
         draw = ImageDraw.Draw(img)
         for r in range(rows):
@@ -358,6 +403,8 @@ def main():
         "true_scale_peak_mm": round(h_max / m_per_mm, 2),
         "vertical_exaggeration_by_segment": exaggeration,
         "local_relief": local_stats,
+        "dem": dem_src,
+        "trails": trail_stats,
         "z_bands_mm": {
             "sea_top": base,
             "plateau_top": round(base + plateau, 3),
@@ -369,7 +416,7 @@ def main():
         "warnings": {
             "frame_px_without_dem": int(nodata.sum()),
             "country_px_without_dem": int((nodata & land).sum()),       # must be 0
-            "finer_than_dem": res < 90.0,    # GLO-90 is ~90 m; below that the print can't gain detail
+            "finer_than_dem": res < DEM_SOURCES[dem_src]["res_m"],   # print finer than the DEM: no extra detail
             "sea_px_without_dem": int((nodata & (cls == 0)).sum()),     # can't be verified as sea
             "reassigned_land_px": reassigned,
         },

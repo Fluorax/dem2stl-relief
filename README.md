@@ -57,6 +57,17 @@ By default, all country land inside the box prints in relief. To print *only* an
 
 A focus polygon is a GeoJSON file you keep in the repo (for example under `regions/`). It can be rough over the sea, because only country land inside it matters. The region must lie within the downloaded data, i.e. inside the country's extent.
 
+### Hiking maps
+
+A small area (one mountain, ~20 km) can work as a topo map to study before a hike. See the `xerovouni` preset:
+```bash
+docker compose run --rm relief python fetch_data.py --region xerovouni   # GLO-30 tiles + OSM trails
+docker compose run --rm relief sh -c "python pipeline.py --region xerovouni && python mesh.py --region xerovouni"
+```
+- **`dem: glo30`** switches the region to Copernicus GLO-30 (30 m). At ~1:100,000 a pixel is ~20 m, so GLO-90 would be far too coarse.
+- **`trails`** downloads hiking paths from OpenStreetMap (ways tagged `highway` in the list, plus every way in a `route=hiking` relation) and cuts them into the land as benches `width_mm` wide: the groove floor is the lowest surface within the trail width, minus `depth_layers`. On slopes that makes a visible ledge, where a plain groove would vanish into the layer steps. `mode: emboss` raises a rib instead (top = highest surface within the width + `depth_layers`). They show dark red in the preview. Use `--refresh-trails` to re-download.
+- Use a **linear curve** with low exaggeration (~1–1.5×): mountains are already tall at this scale.
+
 Small regions mean larger scales. When the report shows `finer_than_dem: true`, the print is finer than GLO-90's ~90 m resolution and can't gain more detail.
 
 ---
@@ -81,7 +92,8 @@ Everything is in `config.yaml`. The scripts derive everything else, including sc
 | `mesh.skip_sea_only` | Don't mesh pure-sea tiles |
 | `colours.bands_m` | Elevations where a new land colour starts; converted to layer heights |
 | `checks.land_threshold_m` | DEM above this counts as land |
-| `regions` | Presets for printing part of the map (see above) |
+| `dem` | `glo90` (default) or `glo30`; regions can override |
+| `regions` | Presets for printing part of the map (see above). Region-only keys: `bbox`, `focus`, `trails` |
 
 ### Current Greece settings
 
@@ -166,7 +178,6 @@ Development history and measurements are in [docs/DEVLOG.md](docs/DEVLOG.md).
 - Minimum island size rule (drop or enlarge islands below printable size)
 - Colour palette (`colours.bands_m`)
 - Tile joining (backing board, pins or dovetails)
-- GLO-30 option for small, large-scale regions
 
 ---
 
@@ -177,6 +188,8 @@ Development history and measurements are in [docs/DEVLOG.md](docs/DEVLOG.md).
 | Elevation | Copernicus DEM GLO-90 (AWS Open Data, `copernicus-dem-90m`) | Free to use with attribution. Verify the exact wording on the Copernicus DEM licence page before publishing prints |
 | Elevation patches | SRTM 1″ via AWS Terrain Tiles (`elevation-tiles-prod/skadi`) | NASA SRTM, public domain |
 | Borders | geoBoundaries gbOpen ADM0 | CC BY 4.0. Cite geoBoundaries (Runfola et al.) |
+| Elevation (hiking regions) | Copernicus DEM GLO-30 (AWS Open Data, `copernicus-dem-30m`) | As GLO-90 |
+| Trails | OpenStreetMap via the Overpass API | ODbL: "© OpenStreetMap contributors" on anything shared that contains trails |
 | Meshing | [hmm](https://github.com/fogleman/hmm) by Michael Fogleman | Built from source in the image |
 
 ## Licence
