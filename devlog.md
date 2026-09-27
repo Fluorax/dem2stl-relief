@@ -200,3 +200,26 @@ Red (unclassified) areas were: Ohrid & Great Prespa lakes (polygon holes), borde
 - Results: scale **1:1,047,005**, 209.4 m/px, 419 m per nozzle width, 4400×4400 px; `h_max` 2,817 m (coarser pixels smooth Olympus further); exaggeration 2.1× / 5.1× / 12.6× / 12.6×; Z bands sea 1.6, plateau 1.8, land min 2.6, max 28.4 mm
 - Flat islands: 6 patched, 9 confirmed_flat, 12 unverified (all ≤ 0.09 km²); Donousa SRTM max 363 m at this resolution (374 m at 164 m/px)
 - `mesh.py` on 3.13.3 ✔: 15 tiles (r3c0 skipped), every height check passed, max Z 28.40 mm (matches `z_bands_mm.max`), hmm error 0.00187 (= 0.05 mm) on all relief tiles, 68 – 585k triangles per tile (0.003 – 24% of naive), each tile < 1 s. Colour changes: plateau at 1.8 mm, country at 2.0 mm
+
+## Relief tuning on Attica (2026-09-27)
+- Region `attica` (1×1, 220 mm, ≈1:460,000). The slice looked "off" versus the smooth preview
+- `curve [300, 1.6]`: the 0–300 m band got 8 layers → the undulating Athens basin became contour spaghetti
+- `curve [300, 0] … [1500, 2.0]`: Attica's max is ~1,413 m (Parnitha) → everything under 2 mm, flat plates with outlines
+- A region-specific curve (`[200, 0.2] … [1450, 12]`) was better, but hills still read weak and plains still terraced
+- The coastline was suspected, but the preview showed coasts matching the relief (no polygon shelves) — ruled out
+- Root cause: 0.2 mm layer quantisation (the smooth preview hides it), plus an absolute-elevation curve that can't tell a flat 300 m plateau from a 300 m hill (Salamina)
+- Added: `relief.local` (regional base via blur + boosted local detail + deadband) and `preview_layers*.png` (layer-snapped preview). Synthetic test: flat 300 m plateau → 0 mm detail; 250 m hill on 50 m ground → +3.5 mm at 8×, 1:460k. Not yet run on real data
+- First real run of `relief.local` on Attica: a big improvement (plains flat, Salamina/Aegina/Lavreotiki textured), but mountains and hills looked like **pins**. The detail term boosts pixel-scale peaks at 8×, so features become far taller than they are wide
+- Added `smooth_km` (low-pass on the detail) and `cap_mm` (soft tanh cap: 1 → 0.98, 2 → 1.85, 4 → 3.05, 8 → 3.86 mm at cap 4). Starting values 0.4 km and 4 mm; not yet run
+- Attica report (1:463,433): `smooth_km`/`cap_mm` were **not applied** (missing from the config). The detail term dominated (p1/p99 −4.4 / +7.0 mm, max 14.2 mm; base max 742 m), max Z 18.3 mm. The top-level curve was in use, not the Attica override (0–300 m at 0.9×)
+- `clipped_at_land_base_px` 306,772: valley detail pushed below the land base and clipped → flat floors with cones rising out of them. Added `valley_factor`
+- The second Attica run still used the old values (`exaggeration` 8, no `smooth_km`/`cap_mm`, `valley_factor` 1.0): the config edits weren't reaching the region. Rewrote `config.yaml` in full. `relief.local` now lives **only in the `attica` preset** (`blur_km` 3, `exaggeration` 5, `deadband_m` 15, `smooth_km` 0.8, `cap_mm` 3, `valley_factor` 0.3), together with an Attica curve for its ~740 m regional base. The whole map is back to the verified curve-only setting
+- The tamer settings (`smooth_km` 0.8, `cap_mm` 3) overcorrected: ridges became round blobs, only a few mm tall, printed as wide contour rings. Switched to comparing variants side by side: presets `attica_linear` (plain curve `[1400, 9]` ≈ 3×, no local) and `attica_mid` (`blur_km` 3, `exaggeration` 6, `deadband_m` 10, `smooth_km` 0.3, `cap_mm` 5, `valley_factor` 0.6)
+- `attica_linear`: max Z 11.6 mm, 3.0× uniform. `attica_mid`: max Z 9.7 mm, detail p99 3.5 mm (max 4.7), still 248,286 px clipped at the land base → "pimples" on flat floors. The base curve is near 0 at low elevations, so there's no room for valleys
+- Added `attica_bal`: lifted low end of the curve (`200 m` → 1.0 mm), `exaggeration` 7, `smooth_km` 0.15, `cap_mm` 8, `valley_factor` 0.4. The target is between the knives (max 18.3) and the pimples (max 9.7)
+- The user liked `attica_linear` (granular, true slopes) and `attica_mid` (flattened plains) for different reasons. Reconciled with `attica_hybrid`: a linear curve plus `local.exaggeration` equal to the curve slope (≈2.98× → 3.0), so the output equals linear except that the `deadband_m` (25 m, `blur_km` 2) flattens small undulation. Numerical check: with deadband 0 it matches linear within 0.04 mm (3.0 vs the true 2.979 slope)
+
+## Layer heights (2026-09-27)
+- The sliced preview's contour rings are mostly the "Feature type" view drawing a perimeter at every step; the 3D view of `attica_hybrid` looked right
+- The printer is calibrated for a 0.2 mm first layer, so it has to stay; the rest go to 0.12 mm. Added `print.first_layer_mm`: layer tops at 0.2 + k × 0.12, `base_mm` validated against the grid, swaps and bands snapped to it, and the layer preview uses the same grid
+- To keep the physical heights close: `base_mm` 1.6 → 1.64, `plateau_layers` 1 → 2 (0.24 mm), `land_offset_layers` 4 → 7 (0.84 mm). Swaps: plateau 1.76 mm, country 2.00 mm. Not yet run; the whole-map baseline numbers above were at 0.2 mm layers

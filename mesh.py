@@ -68,6 +68,7 @@ def main():
     px = L["px_mm"]
     tp = int(round(L["tile_mm"] / px))
     layer, base = PR["layer_mm"], PR["base_mm"]
+    first = PR.get("first_layer_mm", layer)
     plateau_top = base + PR["plateau_layers"] * layer
     land_min = plateau_top + PR["land_offset_layers"] * layer
 
@@ -138,10 +139,13 @@ def main():
              {"layer_top_mm": round(plateau_top + layer, 3), "to": "country base colour"}]
     for e in C.get("bands_m") or []:
         mm = land_min + float(curve(e))
-        top = np.ceil(round(mm / layer, 6)) * layer
+        top = first + np.ceil(round((mm - first) / layer, 6)) * layer
         swaps.append({"layer_top_mm": round(float(top), 3), "to": f"band from {e} m"})
     manifest["colour_changes"] = swaps
-    manifest["first_layer_mm_must_be"] = layer
+    if cfg["relief"].get("local") and C.get("bands_m"):
+        manifest["colour_bands_note"] = ("relief.local is on: band heights follow the regional base "
+                                         "elevation, so band edges are approximate on hills")
+    manifest["slicer_layers_must_be"] = {"first_layer_mm": first, "layer_mm": layer}
 
     (stl_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(json.dumps({k: v for k, v in manifest.items() if k != "tiles"}, indent=2))

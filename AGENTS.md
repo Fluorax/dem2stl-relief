@@ -40,10 +40,12 @@ docker compose run --rm relief python mesh.py [--region NAME] [--only r0c0 r1c2]
 - **Class order.** Rasterize neighbours first and the country last (the country wins overlaps). Then DEM land outside all polygons (> `land_threshold_m`) → class of the nearest polygon pixel (lake holes, border slivers, missing islets). Then the optional region `focus` turns country land outside the polygon into class 1.
 - **Sea** = outside all land polygons, not DEM = 0.
 - **CRS.** The Greek Grid parameters on the **WGS84 datum** (a PROJ string in the config). Plain EPSG:2100 made gdalwarp and geopandas choose different datum transformations → DEM/border misalignment.
-- **Heights:** sea `base`; neighbour `base + plateau`; country `base + plateau + land_offset + curve(h)`. `relief.curve` is PCHIP through `[elevation_m, mm]` points, in print mm (scale-independent).
+- **Heights:** sea `base`; neighbour `base + plateau`; country `base + plateau + land_offset + max(curve(regional) + local, 0)`. `relief.curve` is PCHIP through `[elevation_m, mm]` points, in print mm. With `relief.local`: *regional* = elevation blurred over `blur_km` using country land only (a normalised convolution, so the sea doesn't drag coasts down); *local* = `cap·tanh(exaggeration × deadband(smooth(h − regional)) / m_per_mm / cap)` (`smooth_km`, `cap_mm`, `valley_factor` optional; `valley_factor` scales negative detail before the cap). Without it: regional = h, local = 0.
+- **Tuning.** Judge relief with `preview_layers_small.png` (layer-snapped), not the smooth preview. An absolute-elevation curve alone can't separate flat plateaus from hills — that's why `relief.local` exists.
 - **SRTM fill** is applied only to country islands whose Copernicus max ≤ threshold, and only if SRTM shows relief there (`patched`). Otherwise `confirmed_flat` / `unverified`. Never blend SRTM elsewhere.
 - **hmm units.** x/y in pixels; heightmap normalised 0..1; `z = value × zscale`. **`-e` and `-b` are fractions of zscale, not pixels.** hmm already puts image row 0 at +Y (north at the back). `mesh.py` auto-detects orientation and hard-fails if the mesh top ≠ the heightmap top. Keep that check.
-- **Colour swaps** are layer-top heights: plateau at `base + layer`, country at `plateau_top + layer`, plus `colours.bands_m` via the curve. The first layer must equal `layer_mm`.
+- **Layer grid.** Layer tops are `first_layer_mm + k × layer_mm` (currently 0.2 + k × 0.12; the printer is calibrated for a 0.2 mm first layer). `base_mm` must sit on that grid (the pipeline checks); plateau and land offsets are whole layers above it.
+- **Colour swaps** are layer-top heights: plateau at `base + layer`, country at `plateau_top + layer`, plus `colours.bands_m` via the curve, snapped up to the grid.
 - Users must **not scale STLs in the slicer** (it breaks Z). Change `layout.tile_mm` and regenerate.
 
 ## Verification (after any pipeline/mesh change)

@@ -71,11 +71,12 @@ Everything is in `config.yaml`. The scripts derive everything else, including sc
 | `crs` | Projected CRS for the print. Greece uses the Greek Grid projection on the WGS84 datum, which avoids datum-shift mismatches between GDAL and geopandas |
 | `layout.grid` | `[cols, rows]` of tiles. **Scale is derived** so the country (or region bbox) fits the frame minus `margin_mm` |
 | `layout.tile_mm` / `margin_mm` / `px_mm` | Tile edge, minimum frame margin, and print-space pixel size. `tile_mm / px_mm` must be an integer |
-| `print.layer_mm` | Layer height. The first layer must be the same height, or colour swaps won't land on layer boundaries |
-| `print.base_mm` | Sea thickness |
+| `print.first_layer_mm` / `print.layer_mm` | First-layer and layer height. The slicer must use exactly these values, or colour swaps won't land on layer boundaries. `first_layer_mm` defaults to `layer_mm` |
+| `print.base_mm` | Sea thickness. Must sit on the layer grid (`first_layer_mm + k × layer_mm`); the pipeline refuses otherwise and suggests the nearest valid values |
 | `print.plateau_layers` | Neighbours' height above the sea, in layers |
 | `print.land_offset_layers` | Country land's minimum height above the plateau, in layers. Lifts plains and islands clearly off the sea |
-| `relief.curve` | `[elevation_m, mm]` points: height above the land base. Smooth, monotone interpolation. Steeper segments mean more exaggeration there. Values are in print mm, so they stay valid when the grid changes |
+| `relief.curve` | `[elevation_m, mm]` points: height above the land base. Smooth, monotone interpolation. Steeper segments mean more exaggeration there. Values are in print mm, so they stay valid when the grid changes. With `relief.local` on, the curve applies to the regional base elevation |
+| `relief.local` | Optional local-relief boost: `blur_km` (what counts as surroundings), `exaggeration` (detail × true scale), `deadband_m` (smaller detail is flattened), `smooth_km` (low-passes the detail so peaks aren't needles), `cap_mm` (soft tanh cap: small hills keep their full boost, big peaks get rounded), `valley_factor` (scales negative detail; below 1 keeps valleys from being clipped flat at the land base). Makes hills stand out wherever they are, and keeps plateaus flat |
 | `mesh.max_error_mm` | Maximum vertical deviation when the mesh is simplified |
 | `mesh.skip_sea_only` | Don't mesh pure-sea tiles |
 | `colours.bands_m` | Elevations where a new land colour starts; converted to layer heights |
@@ -84,7 +85,7 @@ Everything is in `config.yaml`. The scripts derive everything else, including sc
 
 ### Current Greece settings
 
-The whole map is a 4×4 grid of 220 mm tiles, 0.88 m across at 1:1,047,005 (419 m of ground per 0.4 mm nozzle width). The relief curve is `0→0, 300→0.6, 1000→4, 1500→10, 3000→28 mm`, which keeps plains nearly flat and exaggerates everything above ~1,000 m by roughly 12×. Land starts 4 layers (0.8 mm) above the plateau.
+The whole map is a 4×4 grid of 220 mm tiles, 0.88 m across at 1:1,047,005 (419 m of ground per 0.4 mm nozzle width). The relief curve is `0→0, 300→0.6, 1000→4, 1500→10, 3000→28 mm`, which keeps plains nearly flat and exaggerates everything above ~1,000 m by roughly 12×. Layers are 0.2 mm first, then 0.12 mm. The sea is 1.64 mm, the plateau 2 layers (0.24 mm) above it, and land starts 7 layers (0.84 mm) above the plateau.
 
 ---
 
@@ -101,7 +102,8 @@ The whole map is a 4×4 grid of 220 mm tiles, 0.88 m across at 1:1,047,005 (419 
    neighbour  z = base + plateau
    country    z = base + plateau + land_offset + curve(elevation)
    ```
-5. **Report and preview.** Writes the scale, exaggeration per curve segment, tile occupancy and checks, plus a hillshaded preview PNG.
+   With `relief.local` on, the country line becomes `… + curve(regional) + exaggeration × (elevation − regional)`, where *regional* is the elevation blurred over `blur_km`. A flat plateau at 300 m and a 300 m hill then print differently: the plateau stays flat and the hill stands out.
+5. **Report and preview.** Writes the scale, exaggeration per curve segment, local-relief stats, tile occupancy and checks, plus two hillshaded previews: a smooth one, and one with heights snapped to print layers.
 
 **`mesh.py`** cuts the heightmap into tiles, with neighbouring tiles sharing their edge row so the seams match. Each tile is meshed with [hmm](https://github.com/fogleman/hmm) (adaptive triangulation with a solid base) and converted to millimetres. The script verifies each mesh's height against the heightmap and writes one STL per tile, plus a manifest with the colour-change heights.
 
@@ -110,6 +112,7 @@ The whole map is a 4×4 grid of 220 mm tiles, 0.88 m across at 1:1,047,005 (419 
 | File | Content |
 |---|---|
 | `preview_small.png`, `preview.png` | Check map (¼ and full resolution) with the tile grid |
+| `preview_layers_small.png`, `preview_layers.png` | Same, with heights snapped to `layer_mm`: what the print will actually look like. Tune the relief with this one |
 | `report.json` | Scale, resolution, exaggeration, Z bands, tile occupancy, warnings, flat-island list |
 | `z.tif` | Print heightmap (mm), the input to `mesh.py` |
 | `dem.tif`, `fill.tif`, `class.tif`, `unclassified.tif`, `hillshade.tif` | Intermediates and diagnostics |
@@ -134,9 +137,9 @@ In `report.json`, `country_px_without_dem` must be 0. `flat_country_islands` lis
 ## Printing
 
 - **Don't scale the STLs in the slicer.** Scaling also changes Z, which breaks the base thickness and the colour-change heights. Change `layout.tile_mm` and regenerate instead.
-- **Colour changes** are listed in `stl/manifest.json` as layer-top heights, where the new colour starts on that layer. With the current settings: plateau colour at 1.8 mm, then country colour at 2.0 mm, plus any `colours.bands_m`. In PrusaSlicer, right-click the layer slider and choose *Add colour change*.
+- **Colour changes** are listed in `stl/manifest.json` as layer-top heights, where the new colour starts on that layer. With the current settings: plateau colour at 1.76 mm, then country colour at 2.0 mm, plus any `colours.bands_m`. In PrusaSlicer, right-click the layer slider and choose *Add colour change*.
 - **Klipper** has no `M600` by default. Add a `gcode_macro M600` that pauses, parks and retracts.
-- **First layer height** must equal `print.layer_mm`.
+- **Layer heights** in the slicer must equal `print.first_layer_mm` and `print.layer_mm` (see `slicer_layers_must_be` in the manifest).
 - Warped corners show up as steps at the tile seams, so bed adhesion matters.
 
 Reference slice: one Greece tile at ~196 mm (a 280 mm tile scaled to 70%), 0.2 mm layers, PETG, 10% infill: ~6h17m, 68 g.

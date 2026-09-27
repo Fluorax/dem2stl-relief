@@ -11,9 +11,10 @@ Outputs in <out_dir>/<region or "full">/:
   z.tif             print height in mm (the heightmap that will be tiled and meshed)
   unclassified.tif  BEFORE reassignment: 1 = DEM land with no polygon (reassigned to nearest
                     polygon's class); 2 = no DEM and no polygon (stays sea)
-  report.json       scale, resolution, Z bands, tile occupancy, warnings
+  report.json       scale, resolution, exaggeration, local-relief stats, Z bands, tile occupancy, warnings
   preview.png       hillshaded check map (full resolution) with tile grid
   preview_small.png same, 1/4 size
+  preview_layers.png / _small.png   same, with heights snapped to print layers (what the print will look like)
 
 Preview colours: blue = sea, dark blue = sea with no DEM (verify it's really sea),
 grey = neighbour plateau, green->brown->white = country by elevation,
@@ -168,6 +169,13 @@ def main():
 
     # --- stage 3: height transform ----------------------------------------------
     layer = PR["layer_mm"]
+    first = PR.get("first_layer_mm", layer)
+    # layer tops are first, first+layer, first+2*layer, ... - the sea surface must sit on one
+    n = (PR["base_mm"] - first) / layer
+    if n < 0 or abs(n - round(n)) > 1e-6:
+        lo = first + max(np.floor(n), 0) * layer
+        sys.exit(f"print.base_mm {PR['base_mm']} is not on the layer grid (first {first} + k*{layer}); "
+                 f"use {lo:.3f} or {lo + layer:.3f}")
     base = PR["base_mm"]
     plateau = PR["plateau_layers"] * layer
     offset = PR["land_offset_layers"] * layer
@@ -228,13 +236,58 @@ def main():
     if not land.any():
         sys.exit("no country land inside the frame - check the region bbox / focus")
     h_max = float(h[land].max())
+
+    # --- relief: regional base through the curve (+ optional local detail) ---------
+    local_cfg = R.get("local")
+    local_stats = None
+    if local_cfg:
+        # base = elevation blurred over blur_km, using country land only (sea doesn't pull coasts down)
+        sigma = local_cfg["blur_km"] * 1000.0 / res
+        w = land.astype(np.float32)
+        num = ndimage.gaussian_filter(np.where(land, h, 0.0).astype(np.float32), sigma)
+        den = ndimage.gaussian_filter(w, sigma)
+        base_h = np.where(land, num / np.maximum(den, 1e-6), 0.0).astype(np.float32)
+        detail = h - base_h
+        if local_cfg.get("smooth_km"):
+            # low-pass the detail itself: removes needle-like single-pixel peaks before boosting
+            s2 = local_cfg["smooth_km"] * 1000.0 / res
+            detail = np.where(land, ndimage.gaussian_filter(np.where(land, detail, 0.0).astype(np.float32), s2)
+                              / np.maximum(ndimage.gaussian_filter(w, s2), 1e-6), 0.0)
+        db = local_cfg.get("deadband_m", 0.0)
+        detail = np.sign(detail) * np.maximum(np.abs(detail) - db, 0.0)
+        # valleys (negative detail) scaled separately: at full strength they get clipped flat at the land base
+        detail = np.where(detail < 0, detail * local_cfg.get("valley_factor", 1.0), detail)
+        local_mm = (local_cfg["exaggeration"] * detail / m_per_mm).astype(np.float32)
+        if local_cfg.get("cap_mm"):
+            # soft cap: small hills keep full boost, big peaks are rounded off instead of spiking
+            cap = float(local_cfg["cap_mm"])
+            local_mm = (cap * np.tanh(local_mm / cap)).astype(np.float32)
+    else:
+        base_h, local_mm = h, np.zeros_like(h)
+    curve_in_max = float(base_h[land].max())
+
     pts = np.array(R["curve"], dtype=np.float64)
     if pts.shape[1] != 2 or np.any(np.diff(pts[:, 0]) <= 0) or np.any(np.diff(pts[:, 1]) < 0):
         sys.exit("relief.curve: [elevation_m, mm] pairs, elevation strictly increasing, mm non-decreasing")
-    if pts[-1, 0] < h_max:
-        print(f"WARNING: curve ends at {pts[-1, 0]} m but h_max is {h_max:.0f} m; higher ground is clipped")
+    if pts[-1, 0] < curve_in_max:
+        print(f"WARNING: curve ends at {pts[-1, 0]} m but its input reaches {curve_in_max:.0f} m; higher ground is clipped")
     curve = PchipInterpolator(pts[:, 0], pts[:, 1])     # smooth and monotone between points
-    relief_mm = curve(np.clip(h[land], pts[0, 0], pts[-1, 0])).astype(np.float32)
+    curve_mm = curve(np.clip(base_h[land], pts[0, 0], pts[-1, 0])).astype(np.float32)
+    relief_mm = np.maximum(curve_mm + local_mm[land], 0.0)   # never below the land base
+
+    if local_cfg:
+        lm = local_mm[land]
+        local_stats = {"blur_km": local_cfg["blur_km"],
+                       "exaggeration": local_cfg["exaggeration"],
+                       "deadband_m": local_cfg.get("deadband_m", 0.0),
+                       "smooth_km": local_cfg.get("smooth_km", 0.0),
+                       "cap_mm": local_cfg.get("cap_mm"),
+                       "valley_factor": local_cfg.get("valley_factor", 1.0),
+                       "base_max_m": round(curve_in_max, 1),
+                       "detail_mm_p1_p99": [round(float(np.percentile(lm, 1)), 2),
+                                            round(float(np.percentile(lm, 99)), 2)],
+                       "detail_mm_max": round(float(lm.max()), 2),
+                       "clipped_at_land_base_px": int(((curve_mm + lm) < 0).sum())}
 
     z = np.full((ny, nx), base, np.float32)
     z[cls == 1] = base + plateau
@@ -247,35 +300,43 @@ def main():
         true_mm = (e1 - e0) / m_per_mm
         exaggeration[f"{e0:.0f}-{e1:.0f} m"] = round((m1 - m0) / true_mm, 1)
 
-    # --- preview (no GIS app needed) --------------------------------------------
-    hs_path = out / "hillshade.tif"
-    run(["gdaldem", "hillshade", "-q", "-compute_edges", "-z", str(m_per_mm),
-         str(out / "z.tif"), str(hs_path)])
-    with rasterio.open(hs_path) as src:
-        shade = (0.35 + 0.65 * src.read(1).astype(np.float32) / 255.0)[..., None]
-
-    rgb = np.zeros((ny, nx, 3), np.float32)
-    rgb[cls == 0] = (40, 90, 160)
-    rgb[(cls == 0) & nodata] = (20, 45, 90)
-    rgb[cls == 1] = (175, 175, 175)
+    # --- previews (no GIS app needed) -------------------------------------------
+    # base colours
+    colour = np.zeros((ny, nx, 3), np.float32)
+    colour[cls == 0] = (40, 90, 160)
+    colour[(cls == 0) & nodata] = (20, 45, 90)
+    colour[cls == 1] = (175, 175, 175)
     frac = np.zeros((ny, nx), np.float32)
     frac[land] = h[land] / h_max
     stops = [0.0, 0.3, 0.7, 1.0]
     ramp = [(70, 140, 60), (150, 150, 80), (140, 100, 60), (250, 250, 250)]
     for ch in range(3):
-        rgb[..., ch][land] = np.interp(frac[land], stops, [c[ch] for c in ramp])
-    rgb = rgb * shade
-    rgb[status == 3] = (220, 0, 220)
+        colour[..., ch][land] = np.interp(frac[land], stops, [c[ch] for c in ramp])
 
-    img = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8))
-    draw = ImageDraw.Draw(img)
-    for r in range(rows):
-        for c in range(cols):
-            x, y = c * tile_px, r * tile_px
-            draw.rectangle([x, y, x + tile_px - 1, y + tile_px - 1], outline=(255, 255, 255), width=3)
-            draw.text((x + 20, y + 20), f"r{r}c{c}", fill=(255, 255, 255))
-    img.save(out / "preview.png")
-    img.resize((nx // 4, ny // 4), Image.LANCZOS).save(out / "preview_small.png")
+    def render(z_arr, name):
+        """Hillshade z_arr at print proportions, colour it, draw the tile grid, save full + 1/4."""
+        zp, hs = out / f"{name}_z.tif", out / f"{name}_hillshade.tif"
+        write_tif(zp, z_arr, transform, crs)
+        run(["gdaldem", "hillshade", "-q", "-compute_edges", "-z", str(m_per_mm), str(zp), str(hs)])
+        with rasterio.open(hs) as src:
+            shade = (0.35 + 0.65 * src.read(1).astype(np.float32) / 255.0)[..., None]
+        zp.unlink()
+        hs.unlink()
+        rgb = colour * shade
+        rgb[status == 3] = (220, 0, 220)
+        img = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8))
+        draw = ImageDraw.Draw(img)
+        for r in range(rows):
+            for c in range(cols):
+                x, y = c * tile_px, r * tile_px
+                draw.rectangle([x, y, x + tile_px - 1, y + tile_px - 1], outline=(255, 255, 255), width=3)
+                draw.text((x + 20, y + 20), f"r{r}c{c}", fill=(255, 255, 255))
+        img.save(out / f"{name}.png")
+        img.resize((nx // 4, ny // 4), Image.LANCZOS).save(out / f"{name}_small.png")
+
+    render(z, "preview")
+    # print-look: heights snapped to layer tops, as the slicer will produce them
+    render((first + np.maximum(np.round((z - first) / layer), 0) * layer).astype(np.float32), "preview_layers")
 
     tiles_report = {"country": [], "neighbour_only": [], "sea_only": []}
     for r in range(rows):
@@ -296,6 +357,7 @@ def main():
         "h_max_m": round(h_max, 1),
         "true_scale_peak_mm": round(h_max / m_per_mm, 2),
         "vertical_exaggeration_by_segment": exaggeration,
+        "local_relief": local_stats,
         "z_bands_mm": {
             "sea_top": base,
             "plateau_top": round(base + plateau, 3),
