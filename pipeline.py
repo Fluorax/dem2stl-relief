@@ -178,6 +178,21 @@ def main():
         inside = rasterize([(focus, 1)], out_shape=(ny, nx), transform=transform, fill=0,
                            dtype="uint8").astype(bool)
         cls[(cls == 2) & ~inside] = 1
+
+    # optional focus point: keep only the connected piece of country land containing it (e.g. one island)
+    if region and region.get("focus_point"):
+        fx, fy = Transformer.from_crs("EPSG:4326", crs, always_xy=True).transform(*region["focus_point"])
+        fc, fr = ~transform * (fx, fy)
+        fr, fc = int(fr), int(fc)
+        if not (0 <= fr < ny and 0 <= fc < nx):
+            sys.exit("focus_point is outside the frame")
+        pieces, _ = ndimage.label(cls == 2)
+        keep = pieces[fr, fc]
+        if keep == 0:
+            sys.exit(f"focus_point {region['focus_point']} is not on country land - move it inland")
+        others = region.get("focus_others", "plateau")
+        cls[(cls == 2) & (pieces != keep)] = 0 if others == "sea" else 1
+        del pieces
     write_tif(out / "class.tif", cls, transform, crs)
 
     # --- stage 3: height transform ----------------------------------------------
@@ -309,10 +324,11 @@ def main():
     trail_mask = np.zeros((ny, nx), bool)
     trail_stats = None
     T = region.get("trails") if region else None
+    tfile = Path(P["trails_dir"]) / f"{args.region}.geojson" if T else None
+    if T and not tfile.exists():
+        print(f"WARNING: {tfile} missing - printing without trails (fetch_data.py --region {args.region} to add them)")
+        T = None
     if T:
-        tfile = Path(P["trails_dir"]) / f"{args.region}.geojson"
-        if not tfile.exists():
-            sys.exit(f"{tfile} missing - run fetch_data.py --region {args.region}")
         lines = gpd.read_file(tfile).to_crs(crs)
         if len(lines):
             half_m = T["width_mm"] / 2 * m_per_mm

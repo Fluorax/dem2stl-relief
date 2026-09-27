@@ -65,8 +65,10 @@ docker compose run --rm relief python fetch_data.py --region xerovouni   # GLO-3
 docker compose run --rm relief sh -c "python pipeline.py --region xerovouni && python mesh.py --region xerovouni"
 ```
 - **`dem: glo30`** switches the region to Copernicus GLO-30 (30 m). At ~1:100,000 a pixel is ~20 m, so GLO-90 would be far too coarse.
-- **`trails`** downloads hiking paths from OpenStreetMap (ways tagged `highway` in the list, plus every way in a `route=hiking` relation) and cuts them into the land as benches `width_mm` wide: the groove floor is the lowest surface within the trail width, minus `depth_layers`. On slopes that makes a visible ledge, where a plain groove would vanish into the layer steps. `mode: emboss` raises a rib instead (top = highest surface within the width + `depth_layers`). They show dark red in the preview. Use `--refresh-trails` to re-download.
+- **`trails`** downloads hiking paths from OpenStreetMap (ways tagged `highway` in the list, plus every way in a `route=hiking` relation) and cuts them into the land as benches `width_mm` wide: the groove floor is the lowest surface within the trail width, minus `depth_layers`. On slopes that makes a visible ledge, where a plain groove would vanish into the layer steps. `mode: emboss` raises a rib instead (top = highest surface within the width + `depth_layers`). They show dark red in the preview. Use `--refresh-trails` to re-download, or `--no-trails` to skip them. If the trails file is missing, the pipeline prints without trails and warns. Overpass is often busy (HTTP 504); `fetch_data.py` retries across mirrors.
 - Use a **linear curve** with low exaggeration (~1–1.5×): mountains are already tall at this scale.
+
+To print **one island only**, set `focus_point: [lon, lat]` somewhere on it. Only the connected piece of country land containing that point stays in relief; other land becomes plateau (or sea, with `focus_others: sea`). See the `salamina` preset. Islands are also the cheapest prints, since most of the tile is thin sea.
 
 Small regions mean larger scales. When the report shows `finer_than_dem: true`, the print is finer than GLO-90's ~90 m resolution and can't gain more detail.
 
@@ -93,7 +95,7 @@ Everything is in `config.yaml`. The scripts derive everything else, including sc
 | `colours.bands_m` | Elevations where a new land colour starts; converted to layer heights |
 | `checks.land_threshold_m` | DEM above this counts as land |
 | `dem` | `glo90` (default) or `glo30`; regions can override |
-| `regions` | Presets for printing part of the map (see above). Region-only keys: `bbox`, `focus`, `trails` |
+| `regions` | Presets for printing part of the map (see above). Region-only keys: `bbox`, `focus`, `focus_point`, `focus_others`, `trails` |
 
 ### Current Greece settings
 

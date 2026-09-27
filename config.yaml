@@ -186,3 +186,23 @@ regions:
       mode: cut
       width_mm: 0.8
       depth_layers: 2
+
+  salamina:                 # Salamina island only (Mavrovouni 404 m). Small and cheap: ~2/3 of the tile is sea
+    bbox: [23.37, 37.84, 23.60, 38.00]     # approximate, ~20 x 18 km
+    focus_point: [23.50, 37.933]            # keep only the land piece containing this point (the island)
+    focus_others: plateau                   # other land (Attica, Megara coast): plateau | sea
+    dem: glo30
+    layout:
+      grid: [1, 1]
+      tile_mm: 150
+    relief:
+      curve:                # linear, ~3x at ~1:155,000 (404 m is only ~2.6 mm at true scale)
+        - [0, 0]
+        - [450, 8.7]
+    trails:
+      highway: [path, footway, bridleway]
+      hiking_routes: true
+      exclude_highway: [motorway, trunk, primary, secondary, tertiary]
+      mode: cut
+      width_mm: 0.8
+      depth_layers: 2

@@ -234,3 +234,9 @@ Red (unclassified) areas were: Ohrid & Great Prespa lakes (polygon holes), borde
 - Xerovouni rerun with the bench cut: trails better. The user suggested embossing as an alternative → added `trails.mode: cut | emboss`
 - Added `konitsa`: Konitsa (40.05 N, 20.75 E), Trapezitsa (2,024 m, north of the Aoos), the Aoos gorge, Tymfi (Gamila 2,497 m at 39.982 N, 20.815 E; ~20–25 km E–W × 15 km N–S). Bbox [20.66, 39.90, 20.96, 40.12] ≈ 25 km, ~1:125,000, linear ≈ 1.1×. Assumed "the gorge" = Aoos; Vikos (SW of Tymfi) needs the bbox extended south. The Albanian border is a few km west of Konitsa, so part of the frame is neighbour plateau. Not yet run
 - `konitsa` run (after fixing a config.yaml that had pipeline.py pasted into it): the user confirmed it looks great with the Aoos-gorge frame
+
+## Small prints (2026-09-27)
+- Konitsa took 22.5 h (220 mm, 0.2 + 0.12 mm layers, mostly land, up to ~25 mm tall). Cheap subjects are small islands on smaller tiles, where most of the area is thin sea
+- Added `focus_point` / `focus_others` (keep one connected land piece). Preset `salamina`: bbox [23.37, 37.84, 23.60, 38.00] (approximate), point at the island centre (37.933 N, 23.50 E), `tile_mm` 150, curve `[450, 8.7]` ≈ 3× (Mavrovouni 404 m), GLO-30, trails cut. Not yet run
+- `fetch_data.py --region salamina`: Overpass (overpass-api.de) returned HTTP 504 (the server was busy). Added retries across public mirrors (overpass-api.de, overpass.kumi.systems, overpass.private.coffee) with 30/60/90 s backoff
+- The mirrors were busy as well. Added `fetch_data.py --no-trails`; the pipeline now warns and prints without trails when the file is missing, instead of stopping. Also: sea-only Copernicus tiles are recorded in `<tiles dir>/.missing`, so reruns stop re-checking the ~17 of them

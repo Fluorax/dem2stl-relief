@@ -38,6 +38,7 @@ docker compose run --rm relief python mesh.py [--region NAME] [--only r0c0 r1c2]
 - **Global parameters.** Heights, `h_max`, the curve, base and colour-swap Z are computed once for the whole frame, never per tile. Otherwise seams won't match.
 - **Shared tile edges.** Each tile is `tile_mm/px_mm + 1` samples; neighbours share the edge row/column. The frame is edge-padded by 1 px.
 - **Class order.** Rasterize neighbours first and the country last (the country wins overlaps). Then DEM land outside all polygons (> `land_threshold_m`) → class of the nearest polygon pixel (lake holes, border slivers, missing islets). Then the optional region `focus` turns country land outside the polygon into class 1.
+- **Focus.** `focus` (polygon) or `focus_point` (keeps the connected component of country land at that point) run after reassignment; other country land → plateau (or sea with `focus_others: sea`).
 - **Sea** = outside all land polygons, not DEM = 0.
 - **CRS.** The Greek Grid parameters on the **WGS84 datum** (a PROJ string in the config). Plain EPSG:2100 made gdalwarp and geopandas choose different datum transformations → DEM/border misalignment.
 - **Heights:** sea `base`; neighbour `base + plateau`; country `base + plateau + land_offset + max(curve(regional) + local, 0)`. `relief.curve` is PCHIP through `[elevation_m, mm]` points, in print mm. With `relief.local`: *regional* = elevation blurred over `blur_km` using country land only (a normalised convolution, so the sea doesn't drag coasts down); *local* = `cap·tanh(exaggeration × deadband(smooth(h − regional)) / m_per_mm / cap)` (`smooth_km`, `cap_mm`, `valley_factor` optional; `valley_factor` scales negative detail before the cap). Without it: regional = h, local = 0.
@@ -78,5 +79,5 @@ Last verified baseline (GDAL 3.13.3, 4×4 grid, 220 mm tiles, `land_offset_layer
 - Minimum island size rule (drop or enlarge sub-printable islands)
 - Colour palette → `colours.bands_m`
 - Tile joining (backing board, pins or dovetails)
-- Hiking presets: `xerovouni` (run, good), `konitsa` (run, good; Aoos-gorge frame)
+- Hiking presets: `xerovouni` (run, good), `konitsa` (run, good; Aoos-gorge frame), `salamina` (built, not yet run)
 - README: exact Copernicus attribution wording still needs to be taken from the official licence page

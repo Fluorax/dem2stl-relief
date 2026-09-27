@@ -17,6 +17,8 @@ import math
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -27,7 +29,35 @@ from pipeline import DEM_SOURCES, load_config
 
 BORDER_URL = ("https://github.com/wmgeolab/geoBoundaries/raw/main/releaseData/gbOpen/"
               "{c}/ADM0/geoBoundaries-{c}-ADM0.geojson")
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# public Overpass instances, tried in order; the main one often returns 504 when busy
+OVERPASS_URLS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
+
+
+def overpass(query, rounds=3):
+    """POST a query, retrying across mirrors with backoff on busy/timeout errors."""
+    body = urllib.parse.urlencode({"data": query}).encode()
+    last = None
+    for attempt in range(rounds):
+        for url in OVERPASS_URLS:
+            try:
+                req = urllib.request.Request(url, data=body, headers={"User-Agent": "dem2stl-relief/1.0"})
+                with urllib.request.urlopen(req, timeout=300) as r:
+                    return json.load(r)
+            except urllib.error.HTTPError as e:
+                if e.code not in (429, 502, 503, 504):
+                    raise
+                last = f"{url}: HTTP {e.code}"
+            except (urllib.error.URLError, TimeoutError) as e:
+                last = f"{url}: {e}"
+            print(f"  overpass busy ({last}), trying next", flush=True)
+        wait = 30 * (attempt + 1)
+        print(f"  all mirrors busy, waiting {wait}s", flush=True)
+        time.sleep(wait)
+    sys.exit(f"Overpass unavailable after {rounds} rounds (last: {last}) - try again later")
 
 
 def ns(lat):
@@ -43,17 +73,22 @@ def degree_ranges(lon0, lat0, lon1, lat1):
 
 
 def fetch_copernicus(src, tdir, lats, lons):
-    """Per-prefix sync (no global bucket listing). Sea-only tiles don't exist: sync copies nothing."""
+    """Per-prefix sync (no global bucket listing). Sea-only tiles don't exist: remembered in .missing."""
     d = DEM_SOURCES[src]
     tdir.mkdir(parents=True, exist_ok=True)
+    missing_file = tdir / ".missing"
+    missing = set(missing_file.read_text().split()) if missing_file.exists() else set()
     for lat in lats:
         for lon in lons:
             t = f"Copernicus_DSM_COG_{d['code']}_{ns(lat)}_00_{ew(lon)}_00_DEM"
-            if (tdir / t / f"{t}.tif").exists():
+            if (tdir / t / f"{t}.tif").exists() or t in missing:
                 continue
             print(f"{src} {t}", flush=True)
             subprocess.run(["aws", "s3", "sync", "--no-sign-request", "--only-show-errors",
                             "--exclude", "AUXFILES/*", f"s3://{d['bucket']}/{t}/", str(tdir / t)], check=True)
+            if not (tdir / t / f"{t}.tif").exists():
+                missing.add(t)                     # sea-only: don't ask again next run
+                missing_file.write_text("\n".join(sorted(missing)) + "\n")
 
 
 def fetch_trails(region, preset, out_file):
@@ -70,10 +105,7 @@ def fetch_trails(region, preset, out_file):
 (._;>;);
 out body;"""
     print(f"trails: querying Overpass for {region}", flush=True)
-    req = urllib.request.Request(OVERPASS_URL, data=urllib.parse.urlencode({"data": query}).encode(),
-                                 headers={"User-Agent": "dem2stl-relief/1.0"})
-    with urllib.request.urlopen(req, timeout=300) as r:
-        data = json.load(r)
+    data = overpass(query)
 
     nodes = {el["id"]: (el["lon"], el["lat"]) for el in data["elements"] if el["type"] == "node"}
     exclude = set(T.get("exclude_highway", ["motorway", "trunk", "primary", "secondary", "tertiary"]))
@@ -99,6 +131,7 @@ def main():
     ap.add_argument("-c", "--config", default="config.yaml")
     ap.add_argument("-r", "--region", help="also fetch region extras (GLO-30, trails) for this preset")
     ap.add_argument("--refresh-trails", action="store_true", help="re-download trails even if present")
+    ap.add_argument("--no-trails", action="store_true", help="skip the trail download (pipeline then prints without)")
     args = ap.parse_args()
     cfg = load_config(args.config, args.region)
     P = cfg["paths"]
@@ -147,7 +180,7 @@ def main():
         if cfg.get("dem", "glo90") == "glo30":
             rl, rn = degree_ranges(*preset["bbox"])
             fetch_copernicus("glo30", Path(P["tiles30_dir"]), rl, rn)
-        if preset.get("trails"):
+        if preset.get("trails") and not args.no_trails:
             tf = Path(P["trails_dir"]) / f"{args.region}.geojson"
             if args.refresh_trails or not tf.exists():
                 fetch_trails(args.region, preset, tf)
